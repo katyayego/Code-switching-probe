@@ -12,23 +12,23 @@ valid_path = 'lid_spaeng/dev.conll'
 # BERT-Base, Multilingual Cased (New, recommended): 104 languages, 12-layer, 768-hidden, 12-heads, 110M parameters
 layer_num = 12
 
-def run_layer(train_loader, dev_loader, test_sentences, mode, layer, device):
+def run_layer(train_loader, dev_loader, mode, layer, device):
     if mode == 'train':
         print('\nstart training layer {} of {} with task {}'.format(
             layer, model_name, task_name))
         logdir = ''
         probe_path = ''
-        probe.train(train_loader, dev_loader, mode, layer, logdir, probe_path + '.tmp', device, test_sentences)
+        probe.train(train_loader, dev_loader, mode, layer, logdir, probe_path + '.tmp', device)
     elif mode == 'test':
         print('\nstart evaluating layer {} of {} with task {}'.format(
             layer, model_name, task_name))
-        summary, labels, preds = probe.test(mode, layer, probe_path, test_sentences)
+        summary, labels, preds = probe.test(mode, layer, probe_path)
         return labels, preds
     return None, None
 
 def run_probe(mode = "train", device="cpu"):
     
-    train_loader, valid_loader, test_sentences = data.load_data(train_file=train_path, valid_file=valid_path, test_file=test_path)
+    train_loader, valid_loader, test_loader = data.load_data(train_file=train_path, valid_file=valid_path, test_file=test_path)
         # logging.info(train_loader.__len__)
     logging.info("Loaded data...")
     # train_features, train_labels = next(iter(train_loader))
@@ -36,7 +36,7 @@ def run_probe(mode = "train", device="cpu"):
     # print(train_labels.shape)
     layers_labels = []
     for layer in range(1):
-        layer_labels, layer_preds = run_layer(train_loader, valid_loader, test_sentences, mode, layer, device)
+        layer_labels, layer_preds = run_layer(train_loader, valid_loader, mode, layer, device)
         if layer_labels is not None:
             if len(layers_labels) == 0:
                 layers_labels.append(layer_labels)
@@ -74,10 +74,10 @@ def run_probe(mode = "train", device="cpu"):
     # elif run_type == "eval":
     #     return 
 def run_evaluation(device):
-    train_loader, valid_loader, test_sentences = data.load_data(train_file=train_path, valid_file=valid_path, test_file=test_path)
+    train_loader, valid_loader, test_loader = data.load_data(train_file=train_path, valid_file=valid_path, test_file=test_path)
     for layer in range(layer_num):
         # break
-        probe.evaluate(test_sentences, layer, device)
+        probe.evaluate(test_loader, layer, device)
 
 if __name__ == "__main__":
     utils.setup_log("main.log")
@@ -90,7 +90,7 @@ if __name__ == "__main__":
     print('MPS availiable' if torch.backends.mps.is_available() else 'Running on CPU')
     device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
     print('Starting task {} with model {}'.format(task_name, model_name))
-    run_probe(mode="train", device = device)
+    # run_probe(mode="train", device = device)
     run_evaluation(device=device)
 
     # trainer = models.ProbeTrainer()
