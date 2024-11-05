@@ -28,7 +28,7 @@ def run_layer(train_loader, dev_loader, mode, layer, device):
 
 def run_probe(mode = "train", device="cpu"):
     
-    train_loader, valid_loader, test_loader = data.load_data(train_file=train_path, valid_file=valid_path, test_file=test_path)
+    train_loader, valid_loader, test_sentences_tok, test_sentences_attn  = data.load_data(train_file=train_path, valid_file=valid_path, test_file=test_path)
         # logging.info(train_loader.__len__)
     logging.info("Loaded data...")
     # train_features, train_labels = next(iter(train_loader))
@@ -74,10 +74,10 @@ def run_probe(mode = "train", device="cpu"):
     # elif run_type == "eval":
     #     return 
 def run_evaluation(device):
-    train_loader, valid_loader, test_loader = data.load_data(train_file=train_path, valid_file=valid_path, test_file=test_path)
-    for layer in range(layer_num):
+    train_loader, valid_loader, test_sentences_tok, test_sentences_attn, test_sentences  = data.load_data(train_file=train_path, valid_file=valid_path, test_file=test_path)
+    for layer in range(1):
         # break
-        probe.evaluate(test_loader, layer, device)
+        probe.evaluate(test_sentences_tok, test_sentences_attn, test_sentences, layer, device)
 
 if __name__ == "__main__":
     utils.setup_log("main.log")

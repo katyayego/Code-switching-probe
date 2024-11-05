@@ -14,8 +14,8 @@ device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
 
 # 8 labels: lang1, lang2, fw, mixed, unk, ambiguous, other and named entities (ne).
 num_labels = 8
-label2idx = {"<pad>":0, "lang1":1, "lang2":2, "fw":3, "mixed":4, "unk":5, "ambiguous":6, "other":7, "ne":8} #make this dynamic
-idx2label = {0:'<pad>', 1:'lang1', 2:"lang2", 3:"fw", 4:"mixed", 5:"unk", 6:"ambiguous", 7:"other", 8:"ne"}
+label2idx = {"lang1":0, "lang2":1, "fw":2, "mixed":3, "unk":4, "ambiguous":5, "other":6, "ne":7, 'ignore':-100} #make this dynamic
+idx2label = {0:'lang1', 1:"lang2", 2:"fw", 3:"mixed", 4:"unk", 5:"ambiguous", 6:"other", 7:"ne", -100:'ignore'}
 tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-cased')
 
 class LIDSentenceDataset(Dataset):
@@ -89,9 +89,9 @@ def align_tokenizations(tokenizer, sentences, labels):
       word_s = word.translate(str.maketrans('', '',
                                     string.punctuation))
       if word_s == "":
-        sentence[i] = '[UNK]'
+        sentence[i] = 'PUNCT'
       elif word_s[0] in UNICODE_EMOJI['en']:
-        sentence[i] = '[UNK]'
+        sentence[i] = 'EMOJI'
       else:
         sentence[i] = word_s
 
@@ -117,14 +117,14 @@ def align_tokenizations(tokenizer, sentences, labels):
           else:
             if token == '[CLS]' or token == '[SEP]':
               current_word = ''
-              aligned_label.append("<pad>")
+              aligned_label.append("ignore")
               index += 1
             else:
               aligned_label.append(tagging[index])
         else:
           if token == '[CLS]' or token == '[SEP]':
             current_word = ''
-            aligned_label.append("<pad>")
+            aligned_label.append("ignore")
             index += 1
     # print(tokenized_sent)
     # print(aligned_label)
@@ -174,30 +174,44 @@ def tokenize_labeled_hfdf(df):
     encoded_dataset = df.map(tokenization, batched=True)
 #   hfdf['tokenized'] = tokenizer.tokenize(' '.join(hfdf['tokens']))
 #   hfdf['tokenized'] = hfdf['tokens'].apply(tokenizer)
-    print(encoded_dataset[0])
+    # print(encoded_dataset[0])
 
 def tokenize_unlabeled_data(sentences):
   tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-cased')
   sentences_ids = []
-  # attention_masks = []
+  attention_masks = []
 #   print(len(sentences))
 #   print(len(sentences[1]))
 #   print(len(sentences[2]))
 #   figure out why this is happening: sentence = [3][8289][sent len]
-  for sentence in sentences[0]:
+  for sentence in sentences:
     # print(len(sentence))
     # print(len(sentence[0]))
     # print(sentences[1][0])
     # print(' '.join(sentence))
+    for i in range(len(sentence)):
+      word = sentence[i]
+      pattern = r"[!¡?¿・…“”]|[\ue000-\uf8ff]"
+      word_s = word.translate(str.maketrans('', '',
+                                    string.punctuation))
+      word_s = re.sub(pattern, "", word_s)
+      
+      if word_s == "":
+        sentence[i] = 'PUNCT'
+      elif word_s[0] in UNICODE_EMOJI['en']:
+        sentence[i] = 'EMOJI'
+      else:
+        sentence[i] = word_s
     bert_tokenized_sentence = tokenizer(' '.join(sentence), max_length=512, truncation=True)
     # sentence_tensor = torch.tensor(tokenizer.convert_tokens_to_ids(['[CLS]'] + bert_tokenized_sentence + ['SEP'])).long()
-    sentences_ids.append(bert_tokenized_sentence)
-    # attention_masks.append(torch.tensor(bert_tokenized_sentence['attention_mask']))
-  # pad_token = tokenizer.convert_tokens_to_ids(tokenizer.tokenize('[PAD]'))[0]
+    sentences_ids.append(torch.tensor(bert_tokenized_sentence['input_ids']).to(device))
+    attention_masks.append(torch.tensor(bert_tokenized_sentence['attention_mask']))
+    # sentences_ids.append(bert_tokenized_sentence)
+  pad_token = tokenizer.convert_tokens_to_ids(tokenizer.tokenize('[PAD]'))[0]
 
-  # sentences = nn.utils.rnn.pad_sequence(sentences_ids, batch_first=True,padding_value=pad_token)
-  # attention_mask = nn.utils.rnn.pad_sequence(attention_masks, batch_first=True,padding_value=0)
-  return sentences_ids
+  sentences = nn.utils.rnn.pad_sequence(sentences_ids, batch_first=True,padding_value=pad_token)
+  attention_mask = nn.utils.rnn.pad_sequence(attention_masks, batch_first=True,padding_value=0)
+  return sentences, attention_mask
 
 
   
@@ -217,6 +231,10 @@ def collate_fn(items):
         # print(sentence)
         # print(label)
         sentences.append(torch.tensor(sentence['input_ids']).to(device))
+        sentence['attention_mask'][0] = 0
+        sentence['attention_mask'][len(sentence['attention_mask'])-1] = 0
+        # print(sentnce['attention_mask'])
+
         attention_mask.append(torch.tensor(sentence['attention_mask']))
         labels.append(label)
         aligned_labels.append(aligned_label)
@@ -224,8 +242,8 @@ def collate_fn(items):
     # print(labels)
     # print(len(sentences))
     # print(len(labels))
-    labels = nn.utils.rnn.pad_sequence(labels, batch_first = True, padding_value=label2idx['<pad>'])
-    aligned_labels = nn.utils.rnn.pad_sequence(aligned_labels, batch_first=True, padding_value=label2idx['<pad>'])
+    labels = nn.utils.rnn.pad_sequence(labels, batch_first = True, padding_value=label2idx['ignore'])
+    aligned_labels = nn.utils.rnn.pad_sequence(aligned_labels, batch_first=True, padding_value=label2idx['ignore'])
     pad_token = tokenizer.convert_tokens_to_ids(tokenizer.tokenize('[PAD]'))[0]
 
 
@@ -245,10 +263,13 @@ def collate_fn_unlabeled(items):
     for sentence in items:
     # sentences[i][0:len(sentence)] = sentence
     # labels[i][0:len(label)] = label
-        # print(sentence)
+      # print(sentence)
         # print(label)
-        sentences.append(torch.tensor(sentence['input_ids']).to(device))
-        attention_mask.append(torch.tensor(sentence['attention_mask']))
+      sentences.append(torch.tensor(sentence['input_ids']).to(device))
+      sentence['attention_mask'][0] = 0
+      sentence['attention_mask'][len(sentence['attention_mask'])-1] = 0
+        # print(sentence['attention_mask'])
+      attention_mask.append(torch.tensor(sentence['attention_mask']))
         # labels.append(label)
         # aligned_labels.append(aligned_label)
         # aligned_labels.append(aligned_label)
@@ -258,7 +279,6 @@ def collate_fn_unlabeled(items):
     # labels = nn.utils.rnn.pad_sequence(labels, batch_first = True, padding_value=label2idx['<pad>'])
     # aligned_labels = nn.utils.rnn.pad_sequence(aligned_labels, batch_first=True, padding_value=label2idx['<pad>'])
     pad_token = tokenizer.convert_tokens_to_ids(tokenizer.tokenize('[PAD]'))[0]
-
 
     # sentences = nn.utils.rnn.pad_sequence(sentences, batch_first = True, padding_value=tokenizer.token)
     sentences = nn.utils.rnn.pad_sequence(sentences, batch_first=True,padding_value=pad_token)
@@ -284,27 +304,22 @@ def load_data(train_file, valid_file, test_file):
     train_sentences, train_labels, train_sent_labels = load_conllu(train_file)
     # train, val, test = load_dataset()
     train_sentences_tok, train_aligned_labels_tok, train_labels_tok = tokenize_labeled_data(train_sentences, train_labels)
-    # print(train_sentences_tok)
-    # train_sentences_emb = get_embeddings(None, train_sentences_tok)
-    # print(train_sentences_emb)
+
     valid_sentences, valid_labels, valid_sent_labels = load_conllu(valid_file)
     valid_sentences_tok, valid_aligned_labels_tok, valid_labels_tok = tokenize_labeled_data(valid_sentences, valid_labels)
     # valid_sentences_emb = get_embeddings(None, valid_sentences_tok)
 
 
     # ignore test taggings
-    test_sentences = load_conllu(test_file)
-    test_sentences_tok = tokenize_unlabeled_data(test_sentences)
-    # print(len(train_sentences))
-    # print(len(train_labels))
-    # print(len(train_sent_labels))
-    # print(train_sentences[0])
-    # print(train_labels[0])
-    # print(train_sent_labels[0])
+    test_sentences,_,_ = load_conllu(test_file)
+    # print(len(test_sentences))
+    # print(len(test_sentences[1]))
+    test_sentences_tok, test_sentences_attn = tokenize_unlabeled_data(test_sentences)
+
 
     train_loader = DataLoader(LIDSentenceDataset(train_sentences_tok, train_aligned_labels_tok, train_labels_tok), batch_size=config.batch_size, collate_fn=collate_fn, shuffle=True)
     valid_loader = DataLoader(LIDSentenceDataset(valid_sentences_tok, valid_aligned_labels_tok, valid_labels_tok), batch_size=config.batch_size, collate_fn=collate_fn)
-    test_loader = DataLoader(LIDSentenceDataset(test_sentences_tok, None, None), batch_size=12, collate_fn=collate_fn_unlabeled)
+    # test_loader = DataLoader(LIDSentenceDataset(test_sentences_tok, None, None), batch_size=1, collate_fn=collate_fn_unlabeled)
 
-    return train_loader, valid_loader, test_loader
+    return train_loader, valid_loader, test_sentences_tok, test_sentences_attn , test_sentences
 
